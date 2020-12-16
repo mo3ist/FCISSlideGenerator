@@ -1,9 +1,9 @@
 import cv2
 import os 
-from time import time 
 from skimage.measure import compare_ssim
 from fpdf import FPDF
 from PIL import Image
+import sys
 
 CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
 
@@ -18,10 +18,16 @@ def get_img_dir():
 		i += 1
 
 IMG_DIR = get_img_dir()
-RATE = 30	# skipped frames
+IMG_EXT = "jpg"
 
+class PDF(FPDF):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
 
-
+	def header(self):
+		self.set_font('Arial', 'B', 8)
+		self.cell(w=30, h = 0, txt = 'FCISSlideGenerator', border = 0, ln = 0, align = '', fill = False, link = 'https://github.com/mo3ist/FCISSlideGenerator')
+		self.ln(20)
 
 def difference(img1, img2):
 	"Takes 2 images as numpy arrays then finds the difference percentage."
@@ -34,7 +40,7 @@ def save_imgs(img_list):
 	if not os.path.exists(IMG_DIR):
 		os.mkdir(IMG_DIR)
 	for i, img in enumerate(img_list):
-		cv2.imwrite(os.path.join(IMG_DIR, f"{i}.jpg"), img)
+		cv2.imwrite(os.path.join(IMG_DIR, f"{i}.{IMG_EXT}"), img)
 
 def get_imgs():
 	"Fetches images for the pdf function"
@@ -43,36 +49,35 @@ def get_imgs():
 		return img_list
 
 	dir_list = os.listdir(IMG_DIR)
-	for file in dir_list:
+	for file in sorted(dir_list):
 		if os.path.isfile(os.path.join(IMG_DIR, file)):
 			img_list.append(os.path.join(IMG_DIR, file))
-
 	return img_list
 
 def imgs_to_pdf(size):
 	"Convert the images in the img_dir to pdf file"
-	img_list = get_imgs()
-	pdf_file = FPDF(unit = "pt", format = size)
-	for img in img_list:
+	pdf_file = PDF(unit = "pt", format = (size[0], size[1] + 40))
+	for i in range(len(os.listdir(IMG_DIR))):
+		img_path = os.path.join(IMG_DIR, f"{i}.{IMG_EXT}")
 		pdf_file.add_page()
-		pdf_file.image(os.path.join(IMG_DIR, img), 0, 0)
+		pdf_file.image(img_path, 0, 40)
 
 	pdf_file.output(os.path.join(IMG_DIR, "output.pdf"), "F")
 
-def main():
-	cap = cv2.VideoCapture("vid.mp4")
+def main(vid, diff_perc, frame_rate):
+	cap = cv2.VideoCapture(vid)
+	frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 	success, img = cap.read()
 	i = 0
 	frame_list = []
 	last_frame = None
-	t = time()
 	while cap.isOpened():
 		# breaking the loop when cap is done
 		if not success:
 			cap.release()
 			break
 		# skip [rate] frames
-		if i%RATE != 0:
+		if i%frame_rate != 0:
 			i += 1
 			continue	# skip
 		# to gray scale
@@ -86,23 +91,28 @@ def main():
 			last_frame = resized_img
 		else:
 			# append if different enough
-			diff = difference(last_frame, resized_img) 
-			if diff > 15:
+			diff = round(difference(last_frame, resized_img)) 
+			if diff > diff_perc:
 				frame_list.append(img)
 				last_frame = resized_img
 
-		# dif = difference("img1.png", "img2.png")
-		print(f"Frame number {i}, Diff {diff}, Frames : {len(frame_list)}")
+		print(f"Frame number {min(i, frame_count)}/{frame_count}, Diff {diff}, Frames : {len(frame_list)}")
 		cap.set(1, i)	# read the ith frame
 		
 		success, img = cap.read()
 		i += 1
 
-	print(f"time : {time()-t}")
 	save_imgs(frame_list)
 	size = [frame_list[0].shape[1], frame_list[0].shape[0]]
 	imgs_to_pdf(size)
-	print("Done")
+	print("#### Done ####")
 
 if __name__ == "__main__":
-	main()
+	try:
+		vid = sys.argv[1]
+		diff_perc = int(sys.argv[2])
+		frame_rate = int(sys.argv[3])
+		main(vid, diff_perc, frame_rate)
+	except:
+		print("USAGE: python3 script.py video_name.mp4 <int:difference_between_frames> <int:skip_frames>")
+		print("E.G.: python3 script.py video_name.mp4 5 30")
